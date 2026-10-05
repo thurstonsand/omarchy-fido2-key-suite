@@ -473,10 +473,14 @@ Item {
 
   // A conversation left open across a sleep is waiting on a key the resume
   // re-enumerated away, and pam_u2f never notices: it waits forever, and the
-  // key looks dead until Tab is pressed twice. Dropping it lets
-  // fido2DetectTimer start a fresh one against the key as it is now.
+  // key looks dead until Tab is pressed twice. Replace it with a fresh one
+  // against the key as it is now -- or start one, if the last timed out while
+  // nobody was there: someone woke the machine, so someone is there now.
   function handleResume() {
-    if (fido2Authenticating) abortFido2()
+    if (fido2Active && lockRequested) {
+      abortFido2()
+      startFido2()
+    }
     if (unlockAfterHibernate && lockRequested && sleepStartedAt > 0) hibernateCheckProc.running = true
   }
 
@@ -789,6 +793,7 @@ Item {
       }
       root.fido2AbsencePending = false
 
+      var attached = present && !root.fido2TokenPresent
       if (root.fido2PresenceKnown && present !== root.fido2TokenPresent) root.announcePresence(present)
       root.fido2TokenPresent = present
       root.fido2PresenceKnown = true
@@ -804,10 +809,12 @@ Item {
       if (!root.locked || !root.fido2Configured) return
 
       // Already on the key: pick the conversation up now that one is attached.
-      // Otherwise let settleAuthMode decide, which covers both a key present at
-      // lock time and one plugged in later.
+      // Only on attach -- a conversation that timed out waiting for a touch is
+      // over until the user asks again, or this poll restarts it every 30s and
+      // wakes the screen each time. Otherwise let settleAuthMode decide, which
+      // covers both a key present at lock time and one plugged in later.
       if (root.fido2Active) {
-        if (!root.fido2Authenticating) root.startFido2()
+        if (attached && !root.fido2Authenticating) root.startFido2()
       } else {
         root.settleAuthMode()
       }
