@@ -502,7 +502,6 @@ Item {
     failedAttempts += 1
     failureMessage = "Security key failed (" + failedAttempts + ")"
     fido2Status = ""
-    runWake()
   }
 
   WlSessionLock {
@@ -568,7 +567,12 @@ Item {
         onToggleAuthMode: root.setAuthMode(root.fido2Active ? "password" : "fido2")
         onRetryFido2Requested: root.startFido2()
         onClearFailureRequested: root.failureMessage = ""
-        onWakeRequested: root.runWake()
+        // Someone is back at the screen: re-arm a key whose last conversation
+        // timed out unattended. Starting one costs nothing; only a PIN does.
+        onWakeRequested: {
+          root.runWake()
+          if (root.fido2Active && !root.fido2Authenticating) root.startFido2()
+        }
       }
 
     }
