@@ -56,6 +56,11 @@ Item {
   // a typo in shell.json should read as "not asked for", not as consent.
   readonly property bool lockOnUnplug: settings.lockOnUnplug === true
   readonly property bool notifyOnKeyChange: settings.notifyOnKeyChange === true
+  // Resuming from hibernation already took the disk passphrase, so a second
+  // prompt from the lock screen proves nothing new -- but only where the image
+  // sits behind disk encryption, which this cannot see. Hence opt-in.
+  readonly property bool unlockAfterHibernate: settings.unlockAfterHibernate === true
+  property real sleepStartedAt: 0
   // Surfaces that show presence -- the bar widget, one instance per monitor --
   // register while they are mounted. Counted rather than flagged so the last
   // one leaving is what stops the watching.
@@ -466,6 +471,15 @@ Item {
     fido2Status = "Checking…"
   }
 
+  // A conversation left open across a sleep is waiting on a key the resume
+  // re-enumerated away, and pam_u2f never notices: it waits forever, and the
+  // key looks dead until Tab is pressed twice. Dropping it lets
+  // fido2DetectTimer start a fresh one against the key as it is now.
+  function handleResume() {
+    if (fido2Authenticating) abortFido2()
+    if (unlockAfterHibernate && lockRequested && sleepStartedAt > 0) hibernateCheckProc.running = true
+  }
+
   function handleFido2Finished(result) {
     fido2Authenticating = false
     fido2NeedsPin = false
@@ -797,6 +811,44 @@ Item {
       } else {
         root.settleAuthMode()
       }
+    }
+  }
+
+  Process {
+    id: sleepMonitor
+    running: true
+    command: ["dbus-monitor", "--system",
+      "type='signal',sender='org.freedesktop.login1',interface='org.freedesktop.login1.Manager',member='PrepareForSleep'"]
+    stdout: SplitParser {
+      onRead: function(line) {
+        if (line.indexOf("boolean true") !== -1) root.sleepStartedAt = Date.now()
+        else if (line.indexOf("boolean false") !== -1) root.handleResume()
+      }
+    }
+  }
+
+  // logind only says the sleep is over, not what it was, so ask systemd-sleep:
+  // the last operation it performed since the sleep began has to be a
+  // hibernate that came back. A suspend-then-hibernate whose hibernate failed
+  // logs a suspend after it, which never touched the disk passphrase. The
+  // result is logged on the way out of the sleep, so wait for it rather than
+  // reading a half-written answer as a no.
+  Process {
+    id: hibernateCheckProc
+    command: root.boundedCommand(
+      "for _ in 1 2 3 4 5 6 7 8 9 10; do "
+      + "last=$(journalctl -q -b -o cat -t systemd-sleep --since \"@$1\" "
+      + "| grep -E \"^(Performing sleep operation|System returned from sleep|Failed to put system to sleep)\" | tail -n 2); "
+      + "case $last in "
+      + "\"Performing sleep operation 'hibernate'...\"$'\\n'\"System returned from sleep\"*) echo yes; exit ;; "
+      + "\"\"|*\"Performing sleep operation\"*\"...\") sleep 0.3 ;; "
+      + "*) echo no; exit ;; "
+      + "esac; done; echo no").concat([String(Math.floor(root.sleepStartedAt / 1000))])
+    stdout: StdioCollector { id: hibernateCheckStdout; waitForEnd: true }
+    onExited: {
+      if (String(hibernateCheckStdout.text || "").trim() !== "yes" || !root.lockRequested) return
+      root.logEvent("unlock-after-hibernate")
+      root.finishUnlock()
     }
   }
 

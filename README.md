@@ -116,6 +116,15 @@ An unplug has to be seen twice before it counts: a key busy answering an
 enrollment in a terminal can miss an enumeration, and that must not lock the
 screen mid-PIN.
 
+### After hibernation
+
+Resuming from hibernation on an encrypted disk asks for the disk passphrase,
+and then the lock screen asks again. `"unlockAfterHibernate": true` skips the
+second prompt, but only when systemd-sleep reports that the machine really did
+come back from hibernate; a plain suspend, or a hibernate that failed and fell
+back to suspend, still locks. It is off by default, and only safe where the
+hibernation image is behind disk encryption.
+
 ### SSH keys on the authenticator
 
 `ssh [name]` mints an `ed25519-sk` key whose private half never leaves the

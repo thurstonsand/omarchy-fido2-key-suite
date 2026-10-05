@@ -130,6 +130,11 @@ check "presence settings are off unless set to exactly true" bash -c '
   grep -q "settings.lockOnUnplug === true" "$1/Service.qml" \
     && grep -q "settings.notifyOnKeyChange === true" "$1/Service.qml"' _ "$REPO"
 
+# Unlocking on resume is only sound behind disk encryption, which nothing here
+# can verify, so it has to be asked for in so many words.
+check "unlock after hibernate is off unless set to exactly true" bash -c '
+  grep -q "settings.unlockAfterHibernate === true" "$1/Service.qml"' _ "$REPO"
+
 # An enrollment running in a terminal holds the key, so an enumeration can
 # come back empty while the key is still plugged in. Locking on that reading
 # would lock the screen under a user halfway through typing a PIN.
